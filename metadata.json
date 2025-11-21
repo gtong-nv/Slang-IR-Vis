@@ -1,0 +1,5 @@
+{
+  "name": "Slang IR Visualizer",
+  "description": "A tool to visualize and understand Slang Intermediate Representation (IR) code using dependency graphs and AI-powered explanations.",
+  "requestFramePermissions": []
+}
