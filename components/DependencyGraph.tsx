@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
-import { IRNode, ParsedIR, IRGraphNode, IRGraphLink, IRNodeType } from '../types';
+import { ParsedIR, IRGraphNode, IRGraphLink, IRNodeType } from '../types';
 
 interface DependencyGraphProps {
   parsedData: ParsedIR;
@@ -11,6 +11,11 @@ interface DependencyGraphProps {
 const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeClick, selectedNodeId }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Refs to access simulation state and D3 objects inside effects without creating dependencies
+  const nodesRef = useRef<IRGraphNode[]>([]);
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const svgSelectionRef = useRef<d3.Selection<SVGSVGElement, unknown, null, undefined> | null>(null);
 
   // Initialize simulation and graph structure
   useEffect(() => {
@@ -31,6 +36,9 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
       radius: n.type === IRNodeType.Variable || n.type === IRNodeType.Function ? 25 : 15,
       group: n.type === IRNodeType.Block ? 1 : (n.opcode === 'varLayout' ? 2 : 3) 
     }));
+    
+    // Update Ref
+    nodesRef.current = nodes;
 
     const nodeIds = new Set(nodes.map(n => n.id));
     const links: IRGraphLink[] = parsedData.edges
@@ -43,17 +51,20 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
     const svg = d3.select(svgRef.current)
       .attr("viewBox", [0, 0, width, height])
       .style("font-family", "sans-serif");
+      
+    svgSelectionRef.current = svg;
 
     // Create a container group for zoom
-    const g = svg.append("g");
+    const g = svg.append("g").attr("class", "zoom-container");
 
-    // Zoom behavior applied to the main SVG, transforming the container 'g'
+    // Zoom behavior
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
       .on("zoom", (event) => {
         g.attr("transform", event.transform);
       });
     
+    zoomRef.current = zoom;
     svg.call(zoom);
 
     // Arrow marker
@@ -75,9 +86,12 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
       .force("link", d3.forceLink<IRGraphNode, IRGraphLink>(links).id(d => d.id).distance(80))
       .force("charge", d3.forceManyBody().strength(-300))
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collide", d3.forceCollide().radius(d => (d.radius || 20) + 5));
+      .force("collide", d3.forceCollide<IRGraphNode>().radius(d => (d.radius || 20) + 5));
 
-    const link = g.append("g")
+    // Separate group for links so they are always behind nodes
+    const linkGroup = g.append("g").attr("class", "links");
+    
+    const link = linkGroup
       .attr("stroke", "#475569")
       .attr("stroke-opacity", 0.6)
       .selectAll("line")
@@ -86,11 +100,14 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
       .attr("stroke-width", 1.5)
       .attr("marker-end", "url(#arrow)");
 
-    // Create a group for each node to hold circle and text
-    const node = g.append("g")
-      .selectAll("g")
+    // Separate group for nodes
+    const nodeGroup = g.append("g").attr("class", "nodes");
+
+    const node = nodeGroup
+      .selectAll<SVGGElement, IRGraphNode>("g")
       .data(nodes)
       .join("g")
+      .attr("class", "node-group") // Add class for easier selection
       .call(d3.drag<SVGGElement, IRGraphNode>()
         .on("start", dragstarted)
         .on("drag", dragged)
@@ -104,7 +121,7 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
       .attr("stroke-width", 1.5)
       .attr("cursor", "pointer")
       .on("click", (event, d) => {
-        event.stopPropagation(); // Prevent drag/zoom interference
+        event.stopPropagation();
         onNodeClick(d.id);
       });
 
@@ -119,9 +136,9 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
       .attr("fill", "white")
       .attr("pointer-events", "none");
 
-    // Opcode labels (small below)
+    // Opcode labels
     node.append("text")
-      .text(d => d.details.opcode ? d.details.opcode.slice(0, 8) : '')
+      .text(d => d.details.opcode ? d.details.opcode.slice(0, 12) : '')
       .attr("x", 0)
       .attr("y", d => (d.radius || 15) + 12)
       .attr("text-anchor", "middle")
@@ -136,7 +153,6 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
         .attr("x2", d => (d.target as IRGraphNode).x!)
         .attr("y2", d => (d.target as IRGraphNode).y!);
 
-      // Move the entire node group (circle + text)
       node
         .attr("transform", d => `translate(${d.x},${d.y})`);
     });
@@ -168,17 +184,18 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
     return () => {
       simulation.stop();
     };
-  }, [parsedData, onNodeClick]); // IMPORTANT: selectedNodeId is NOT here to avoid re-init
+  }, [parsedData, onNodeClick]); // Dependencies for init
 
-  // Separate effect for Selection Highlight
+  // Handle Node Selection (Highlight + Zoom)
   useEffect(() => {
-    if (!svgRef.current) return;
+    if (!svgRef.current || !zoomRef.current || !svgSelectionRef.current) return;
+    
     const svg = d3.select(svgRef.current);
 
-    // Reset styles
+    // 1. Visual Highlight
     svg.selectAll<SVGCircleElement, IRGraphNode>("circle")
       .attr("fill", d => {
-          if (d.id === selectedNodeId) return "#f59e0b"; // Amber for selected
+          if (d.id === selectedNodeId) return "#f59e0b"; // Selected Color
           if (d.type === IRNodeType.Function) return "#ef4444";
           if (d.type === IRNodeType.Block) return "#8b5cf6";
           if (d.details.opcode === 'varLayout') return "#334155";
@@ -186,20 +203,43 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
       })
       .attr("stroke", d => d.id === selectedNodeId ? "#fcd34d" : "#fff")
       .attr("stroke-width", d => d.id === selectedNodeId ? 3 : 1.5);
-      
-      // Optional: Bring selected to front
-      if (selectedNodeId) {
-          svg.selectAll<SVGGElement, IRGraphNode>("g")
-             .filter(d => d && d.id === selectedNodeId)
-             .raise();
-      }
 
-  }, [selectedNodeId, parsedData]);
+    // Raise selected node group to front
+    if (selectedNodeId) {
+      svg.selectAll(".node-group")
+         .filter((d: any) => d.id === selectedNodeId)
+         .raise();
+    }
+
+    // 2. Zoom to Center Logic
+    if (selectedNodeId && containerRef.current) {
+      const node = nodesRef.current.find(n => n.id === selectedNodeId);
+      
+      // Ensure node exists and has coordinates (simulation might still be initializing, but usually it has initial pos)
+      if (node && typeof node.x === 'number' && typeof node.y === 'number') {
+        const width = containerRef.current.clientWidth;
+        const height = containerRef.current.clientHeight;
+        const scale = 1.5; // Target zoom level
+        
+        // Calculate translation to center the node
+        // We want (node.x * scale + tx) = width / 2
+        const tx = width / 2 - node.x * scale;
+        const ty = height / 2 - node.y * scale;
+
+        const transform = d3.zoomIdentity.translate(tx, ty).scale(scale);
+
+        svgSelectionRef.current.transition()
+          .duration(750) // Smooth animation
+          .call(zoomRef.current.transform, transform);
+      }
+    }
+
+  }, [selectedNodeId]); // Only re-run when selection changes
 
   return (
     <div ref={containerRef} className="w-full h-full relative bg-slate-900 overflow-hidden rounded-lg shadow-inner border border-slate-800">
       <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
-      <div className="absolute bottom-4 left-4 pointer-events-none bg-slate-950/80 p-2 rounded text-xs text-slate-400 border border-slate-800">
+      <div className="absolute bottom-4 left-4 pointer-events-none bg-slate-950/80 p-2 rounded text-xs text-slate-400 border border-slate-800 z-20">
         <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-blue-500"></span> Instruction</div>
         <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-slate-600"></span> Layout/Meta</div>
         <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-purple-500"></span> Block</div>

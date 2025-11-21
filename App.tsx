@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { ParsedIR } from './types';
 import { parseSlangIR } from './services/irParser';
 import { analyzeFlow } from './services/geminiService';
 import CodeEditor from './components/CodeEditor';
 import DependencyGraph from './components/DependencyGraph';
 import InfoPanel from './components/InfoPanel';
-import { Layout, Play, FileText, MessageSquare, Sparkles } from 'lucide-react';
+import { Layout, FileText, MessageSquare, Sparkles } from 'lucide-react';
 
 // Sample data from prompt
 const SAMPLE_IR = `let  %1	: Void	= varLayout(%2, %3, %4, %5)
@@ -61,14 +61,20 @@ const App: React.FC = () => {
   const [globalAnalysis, setGlobalAnalysis] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
+  // Debounce parsing to avoid re-simulating graph on every keypress
   useEffect(() => {
-    const data = parseSlangIR(irCode);
-    setParsedData(data);
+    const timer = setTimeout(() => {
+      const data = parseSlangIR(irCode);
+      setParsedData(data);
+    }, 800); // 800ms debounce
+
+    return () => clearTimeout(timer);
   }, [irCode]);
 
-  const handleNodeSelect = (id: string) => {
+  // Stable callback to prevent graph re-init
+  const handleNodeSelect = useCallback((id: string) => {
     setSelectedNodeId(id);
-  };
+  }, []);
 
   const handleAnalyzeGlobal = async () => {
     setIsAnalyzing(true);
@@ -85,7 +91,7 @@ const App: React.FC = () => {
   return (
     <div className="h-screen flex flex-col bg-slate-950 text-slate-200 font-sans">
       {/* Header */}
-      <header className="h-14 border-b border-slate-800 bg-slate-900 flex items-center px-6 justify-between shadow-sm z-10">
+      <header className="h-14 border-b border-slate-800 bg-slate-900 flex items-center px-6 justify-between shadow-sm z-10 shrink-0">
         <div className="flex items-center gap-3">
           <div className="bg-indigo-600 p-1.5 rounded text-white">
              <Layout size={20} />
@@ -152,7 +158,7 @@ const App: React.FC = () => {
                    </div>
                )}
            </div>
-           <div className="flex-1 p-4">
+           <div className="flex-1 p-4 h-full w-full overflow-hidden">
              {parsedData && (
                <DependencyGraph 
                  parsedData={parsedData} 
@@ -164,7 +170,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Right: Details Panel */}
-        <div className="w-80 border-l border-slate-800 bg-slate-900/30">
+        <div className="w-80 border-l border-slate-800 bg-slate-900/30 shrink-0">
            <InfoPanel 
              selectedNode={selectedNode} 
              contextCode={parsedData?.rawLines || []}
