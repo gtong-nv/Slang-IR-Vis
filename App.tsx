@@ -1,14 +1,78 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { ParsedIR } from './types';
-import { parseSlangIR } from './services/irParser';
+import { ParsedIR, IRPass } from './types';
+import { parseSlangIR, parsePasses } from './services/irParser';
 import { analyzeFlow } from './services/geminiService';
 import CodeEditor from './components/CodeEditor';
 import DependencyGraph from './components/DependencyGraph';
 import InfoPanel from './components/InfoPanel';
-import { Layout, MessageSquare, Sparkles } from 'lucide-react';
+import { Layout, MessageSquare, Sparkles, Layers, FileText } from 'lucide-react';
 
-// Sample data from prompt
-const SAMPLE_IR = `let  %1	: Void	= varLayout(%2, %3, %4, %5)
+// Updated Sample data with multiple passes
+const SAMPLE_IR = `###
+### AFTER-VECTOR-LEGALIZATION:
+Poison
+let  %1	: Void	= varLayout(%2, %3)
+let  %3	: Void	= offset(9 : Int, 0 : Int)
+let  %2	: Void	= structuredBufferTypeLayout(%4, %5)
+let  %5	: Void	= size(9 : Int, 1 : Int)
+let  %4	: Void	= typeLayout(%6)
+let  %6	: Void	= size(8 : Int, 4 : Int)
+let  %7	: Vec(UInt, 2 : Int)	= makeVector(0 : UInt, 0 : UInt)
+let  %8	: Void	= EntryPointLayout(%9, %10)
+let  %10	: Void	= varLayout(%11)
+let  %9	: Void	= varLayout(%12)
+let  %12	: Void	= structTypeLayout(%13)
+let  %13	: Void	= structFieldLayout(%14, %15)
+let  %15	: Void	= varLayout(%11, %16, %17)
+let  %17	: Void	= stage(6 : Int)
+let  %16	: Void	= systemValueSemantic("SV_DispatchThreadID", 0 : Int)
+let  %11	: Void	= typeLayout
+let  %14	: _	= key
+[export("_SV10enum_repro13genericStructg1T7channel")]
+[nameHint("channel")]
+let  %channel	: _	= key
+[export("_ST10enum_repro13genericStructg1TG03int")]
+[nameHint("genericStruct")]
+struct %genericStruct	: Type
+{
+	field(%channel, Int)
+}
+
+[nameHint("outputBuffer")]
+[export("_SV10enum_repro12outputBuffer")]
+[layout(%1)]
+let  %outputBuffer	: RWStructuredBuffer(Int, DefaultLayout, %7)	= global_param
+[entryPoint(6 : Int, "computeMain", "enum_repro")]
+[keepAlive]
+[numThreads(4 : Int, 1 : Int, 1 : Int)]
+[export("_S10enum_repro11computeMainp1pi_v3uV")]
+[nameHint("computeMain")]
+[layout(%8)]
+func %computeMain	: Func(Void, BorrowInParam(Vec(UInt, 3 : Int), 1 : UInt64, 2147483647 : UInt64))
+{
+block %18(
+		[layout(%15)]
+		[nameHint("dispatchThreadID")]
+		[semantic("SV_DispatchThreadID", 0 : Int)]
+		param %dispatchThreadID	: BorrowInParam(Vec(UInt, 3 : Int), 1 : UInt64, 2147483647 : UInt64)):
+	let  %19	: Vec(UInt, 3 : Int)	= load(%dispatchThreadID)
+	[nameHint("obj")]
+	let  %obj	: Ptr(%genericStruct)	= var
+	let  %20	: Ptr(Int)	= get_field_addr(%obj, %channel)
+	let  %21	: UInt	= swizzle(%19, 0 : Int)
+	let  %22	: UInt	= irem(%21, 4 : UInt)
+	let  %23	: Int	= intCast(%22)
+	store(%20, %23)
+	let  %24	: UInt	= swizzle(%19, 0 : Int)
+	let  %25	: Ptr(Int)	= rwstructuredBufferGetElementPtr(%outputBuffer, %24)
+	let  %26	: Ptr(Int)	= get_field_addr(%obj, %channel)
+	let  %27	: Int	= load(%26)
+	store(%25, %27)
+	return_val(void_constant)
+}
+###
+### POST LINK AND OPTIMIZE:
+let  %1	: Void	= varLayout(%2, %3, %4, %5)
 let  %3	: Void	= offset(5 : Int, 0 : Int)
 Poison
 let  %6	: Void	= varLayout(%7, %8)
@@ -51,33 +115,69 @@ block %21:
 	let  %26	: Ptr(Int)	= rwstructuredBufferGetElementPtr(%outputBuffer, %23)
 	store(%26, %25)
 	return_val(void_constant)
-}`;
+}
+###`;
 
 const App: React.FC = () => {
-  const [irCode, setIrCode] = useState(SAMPLE_IR);
+  // State for Pass Management
+  const [passes, setPasses] = useState<IRPass[]>([]);
+  const [selectedPassIndex, setSelectedPassIndex] = useState(0);
+  
+  // Parsing and Selection
   const [parsedData, setParsedData] = useState<ParsedIR | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [globalAnalysis, setGlobalAnalysis] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  // Debounce parsing to avoid re-simulating graph on every keypress
+  // Initialize passes from SAMPLE_IR on mount
   useEffect(() => {
+    const initialPasses = parsePasses(SAMPLE_IR);
+    setPasses(initialPasses);
+  }, []);
+
+  const currentPass = useMemo(() => passes[selectedPassIndex], [passes, selectedPassIndex]);
+
+  // Debounce parsing of the CURRENT pass content
+  useEffect(() => {
+    if (!currentPass) return;
+
     const timer = setTimeout(() => {
-      const data = parseSlangIR(irCode);
+      const data = parseSlangIR(currentPass.content);
       setParsedData(data);
     }, 800); // 800ms debounce
 
     return () => clearTimeout(timer);
-  }, [irCode]);
+  }, [currentPass]);
 
-  // Stable callback to prevent graph re-init
+  // Update pass content when code is edited
+  const handleCodeChange = (newCode: string) => {
+    // Detect if the user pasted a new multi-pass dump
+    const isMultiPassDump = newCode.includes('###') && /###\s*\n\s*###/.test(newCode);
+    
+    if (isMultiPassDump) {
+        const newPasses = parsePasses(newCode);
+        setPasses(newPasses);
+        setSelectedPassIndex(0);
+        setGlobalAnalysis(null); // Reset analysis on full reload
+    } else {
+        // Just updating current pass content
+        const updatedPasses = [...passes];
+        updatedPasses[selectedPassIndex] = { 
+            ...updatedPasses[selectedPassIndex], 
+            content: newCode 
+        };
+        setPasses(updatedPasses);
+    }
+  };
+
   const handleNodeSelect = useCallback((id: string) => {
     setSelectedNodeId(id);
   }, []);
 
   const handleAnalyzeGlobal = async () => {
+    if (!currentPass) return;
     setIsAnalyzing(true);
-    const result = await analyzeFlow(irCode);
+    const result = await analyzeFlow(currentPass.content);
     setGlobalAnalysis(result);
     setIsAnalyzing(false);
   };
@@ -100,7 +200,7 @@ const App: React.FC = () => {
         <div>
            <button 
             onClick={handleAnalyzeGlobal}
-            disabled={isAnalyzing}
+            disabled={isAnalyzing || !currentPass}
             className="text-sm px-3 py-1.5 rounded bg-emerald-600 border border-emerald-500 text-white hover:bg-emerald-500 flex items-center gap-2 transition-all shadow-[0_0_10px_rgba(16,185,129,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
           >
              {isAnalyzing ? <span className="animate-spin">⏳</span> : <MessageSquare size={14} />}
@@ -112,14 +212,41 @@ const App: React.FC = () => {
       {/* Main Content */}
       <main className="flex-1 flex overflow-hidden">
         
-        {/* Left: Code View */}
-        <div className="w-1/3 min-w-[350px] flex flex-col z-10">
+        {/* Pass Selection Sidebar (Only if multiple passes) */}
+        {passes.length > 1 && (
+          <div className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0">
+            <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 text-slate-400 uppercase tracking-wider text-xs font-bold">
+                <Layers size={14} />
+                Compilation Passes
+            </div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+               {passes.map((pass, idx) => (
+                   <button
+                     key={idx}
+                     onClick={() => { setSelectedPassIndex(idx); setSelectedNodeId(null); }}
+                     className={`w-full text-left px-4 py-3 border-b border-slate-800/50 text-sm flex items-center gap-2 transition-colors ${
+                         selectedPassIndex === idx 
+                         ? 'bg-indigo-900/30 text-white border-l-4 border-l-indigo-500' 
+                         : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200 border-l-4 border-l-transparent'
+                     }`}
+                   >
+                       <FileText size={14} className={selectedPassIndex === idx ? 'text-indigo-400' : 'opacity-50'}/>
+                       <span className="truncate">{pass.name}</span>
+                   </button>
+               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Code View */}
+        <div className={`${passes.length > 1 ? 'w-[350px]' : 'w-1/3 min-w-[350px]'} flex flex-col z-10 border-r border-slate-800`}>
            <CodeEditor 
-             code={irCode} 
-             onChange={setIrCode} 
+             code={currentPass?.content || ''} 
+             onChange={handleCodeChange} 
              selectedNodeId={selectedNodeId}
              onNodeSelect={handleNodeSelect}
              nodeCount={parsedData?.nodes.size || 0}
+             title={currentPass?.name}
            />
         </div>
 

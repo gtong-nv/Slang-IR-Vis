@@ -1,4 +1,81 @@
-import { IRNode, IRNodeType, ParsedIR, IROperand } from '../types';
+import { IRNode, IRNodeType, ParsedIR, IROperand, IRPass } from '../types';
+
+export const parsePasses = (input: string): IRPass[] => {
+  // Normalize line endings
+  const lines = input.replace(/\r\n/g, '\n').split('\n');
+  const passes: IRPass[] = [];
+  
+  let currentBuffer: string[] = [];
+  let currentName = "Source";
+  let foundAnyPass = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    // Check for start of a pass delimiter sequence:
+    // ###
+    // ### <PASS NAME>
+    if (line === '###') {
+      // Look ahead for name line
+      if (i + 1 < lines.length && lines[i+1].trim().startsWith('###')) {
+        // Found a pass transition
+        
+        // Save previous pass if it exists and isn't just empty preamble
+        if (foundAnyPass || currentBuffer.some(l => l.trim() !== '')) {
+             // If it's the very first block and completely empty, ignore it (preamble)
+             if (passes.length === 0 && !foundAnyPass && currentBuffer.every(l => l.trim() === '')) {
+                 // ignore
+             } else {
+                 passes.push({
+                     name: currentName,
+                     content: currentBuffer.join('\n')
+                 });
+             }
+        }
+        
+        // Start new pass
+        const nameLine = lines[i+1].trim();
+        // Remove '###' prefix and optional colon suffix
+        let name = nameLine.replace(/^###/, '').trim();
+        if (name.endsWith(':')) name = name.slice(0, -1);
+        
+        currentName = name || "Unnamed Pass";
+        currentBuffer = [];
+        foundAnyPass = true;
+        
+        // Skip the name line too
+        i++; 
+        continue;
+      } else {
+          // It's a ### but not followed by ### Name. Could be end delimiter.
+          // We skip this line effectively acting as a separator.
+          continue;
+      }
+    }
+    
+    currentBuffer.push(lines[i]);
+  }
+  
+  // Flush final buffer
+  if (currentBuffer.length > 0) {
+      // If it was empty but we had passes, don't push empty at end
+      if (foundAnyPass && currentBuffer.every(l => l.trim() === '')) {
+          // ignore trailing empty
+      } else {
+        passes.push({
+            name: currentName,
+            content: currentBuffer.join('\n')
+        });
+      }
+  }
+  
+  // Fallback for simple files without delimiters
+  if (passes.length === 0) {
+      return [{ name: 'Source', content: input }];
+  }
+  
+  return passes;
+};
 
 export const parseSlangIR = (input: string): ParsedIR => {
   const lines = input.split('\n');
@@ -11,7 +88,7 @@ export const parseSlangIR = (input: string): ParsedIR => {
   const instructionRegex = /let\s+(%\w+)\s*:\s*(.+?)\s*=\s*(\w+)\((.*)\)/;
   
   // block %21:
-  const blockRegex = /block\s+(%\w+):/;
+  const blockRegex = /block\s+(%\w+)(?::|\()/; // Updated to handle optional params (
 
   // func %computeMain : Func(Void)
   const funcRegex = /func\s+(%\w+)\s*:\s*(.+)/;
@@ -19,14 +96,13 @@ export const parseSlangIR = (input: string): ParsedIR => {
   // %outputBuffer : RWStructuredBuffer(...) = global_param
   const globalParamRegex = /(%\w+)\s*:\s*(.+?)\s*=\s*global_param/;
 
-  // Simple store: store(%26, %25) - this is an instruction without return value usually, but in IR often looks like op call
-  // Some IR instructions don't return a value (void), e.g. store(%ptr, %val)
-  // The provided sample shows `let` for almost everything, but `store` might be standalone
+  // Simple store: store(%26, %25)
   const voidOpRegex = /^\s*(\w+)\((.*)\)/; 
 
   lines.forEach((line, index) => {
     const cleanLine = line.trim();
     if (!cleanLine || cleanLine.startsWith('//')) return;
+    if (cleanLine.startsWith('###')) return; // Ignore pass delimiters if any leak through
 
     // 1. Match LET instructions
     const letMatch = cleanLine.match(instructionRegex);
@@ -46,11 +122,8 @@ export const parseSlangIR = (input: string): ParsedIR => {
       
       nodes.set(id, node);
       
-      // Create edges from operands (dependencies) to this node
       operands.forEach(op => {
         if (op.refId) {
-           // Dependency: op.refId must exist before node.id
-           // Edge direction: op.refId -> node.id (Data flows from definition to usage)
            edges.push({ from: op.refId, to: id });
         }
       });
@@ -105,19 +178,15 @@ export const parseSlangIR = (input: string): ParsedIR => {
       return;
     }
 
-    // 5. Standalone/Void Ops (like store)
-    // These don't produce a %id result in the line itself usually, but they are nodes in execution
-    // We assign a synthetic ID for visualization
+    // 5. Standalone/Void Ops
     const voidMatch = cleanLine.match(voidOpRegex);
     if (voidMatch && !line.includes('=')) {
-       // Exclude attributes like [entryPoint...]
        if (cleanLine.startsWith('[')) return;
-       // Exclude labels
        if (cleanLine.endsWith(':')) return;
 
        const [, opcode, argsRaw] = voidMatch;
        const operands = parseOperands(argsRaw);
-       const syntheticId = `op_${index}`; // synthetic ID
+       const syntheticId = `op_${index}`;
 
        const node: IRNode = {
          id: syntheticId,
@@ -148,10 +217,6 @@ export const parseSlangIR = (input: string): ParsedIR => {
 
 const parseOperands = (rawArgs: string): IROperand[] => {
   if (!rawArgs.trim()) return [];
-  // Split by comma, but be careful about nested parens (simple split for now as Slang IR is usually flat-ish in args)
-  // A better parser would handle nested structures, but for this viz, comma split is a 90% solution.
-  // Slang IR vectors: makeVector(0 : UInt, 0 : UInt) -> contains commas inside.
-  
   const operands: IROperand[] = [];
   let current = '';
   let depth = 0;
@@ -176,7 +241,6 @@ const parseOperands = (rawArgs: string): IROperand[] => {
 };
 
 const processOperand = (raw: string): IROperand => {
-  // Check for %id
   const idMatch = raw.match(/%(?:[\w\d]+)/);
   if (idMatch) {
     return { raw, refId: idMatch[0] };

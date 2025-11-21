@@ -53,3 +53,8 @@ export interface ParsedIR {
   functions: string[];
   rawLines: string[];
 }
+
+export interface IRPass {
+  name: string;
+  content: string;
+}
