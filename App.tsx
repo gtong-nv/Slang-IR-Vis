@@ -5,7 +5,7 @@ import { analyzeFlow } from './services/geminiService';
 import CodeEditor from './components/CodeEditor';
 import DependencyGraph from './components/DependencyGraph';
 import InfoPanel from './components/InfoPanel';
-import { Layout, FileText, MessageSquare, Sparkles } from 'lucide-react';
+import { Layout, MessageSquare, Sparkles } from 'lucide-react';
 
 // Sample data from prompt
 const SAMPLE_IR = `let  %1	: Void	= varLayout(%2, %3, %4, %5)
@@ -57,7 +57,6 @@ const App: React.FC = () => {
   const [irCode, setIrCode] = useState(SAMPLE_IR);
   const [parsedData, setParsedData] = useState<ParsedIR | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
   const [globalAnalysis, setGlobalAnalysis] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
@@ -98,18 +97,11 @@ const App: React.FC = () => {
           </div>
           <h1 className="font-bold text-lg tracking-tight text-slate-100">Slang IR <span className="text-indigo-400 font-light">Visualizer</span></h1>
         </div>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => setIsEditing(!isEditing)}
-            className={`text-sm px-3 py-1.5 rounded border transition-colors flex items-center gap-2 ${isEditing ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'}`}
-          >
-             <FileText size={14} />
-             {isEditing ? 'Done Editing' : 'Edit Source'}
-          </button>
+        <div>
            <button 
             onClick={handleAnalyzeGlobal}
             disabled={isAnalyzing}
-            className="text-sm px-3 py-1.5 rounded bg-emerald-600 border border-emerald-500 text-white hover:bg-emerald-500 flex items-center gap-2 transition-all shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+            className="text-sm px-3 py-1.5 rounded bg-emerald-600 border border-emerald-500 text-white hover:bg-emerald-500 flex items-center gap-2 transition-all shadow-[0_0_10px_rgba(16,185,129,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
           >
              {isAnalyzing ? <span className="animate-spin">⏳</span> : <MessageSquare size={14} />}
              Analyze Flow
@@ -121,32 +113,18 @@ const App: React.FC = () => {
       <main className="flex-1 flex overflow-hidden">
         
         {/* Left: Code View */}
-        <div className="w-1/3 min-w-[350px] border-r border-slate-800 flex flex-col">
-          <div className="p-2 bg-slate-900/50 border-b border-slate-800 text-xs font-semibold text-slate-500 uppercase tracking-wider flex justify-between">
-             <span>Source Code</span>
-             <span className="text-indigo-400">{parsedData?.nodes.size || 0} Nodes Parsed</span>
-          </div>
-          <div className="flex-1 overflow-hidden p-2 relative">
-             {isEditing ? (
-               <textarea 
-                 className="w-full h-full bg-slate-900 text-slate-300 p-4 font-mono text-sm rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                 value={irCode}
-                 onChange={(e) => setIrCode(e.target.value)}
-                 spellCheck={false}
-               />
-             ) : (
-               <CodeEditor 
-                 code={irCode} 
-                 onChange={setIrCode} 
-                 selectedNodeId={selectedNodeId}
-                 onNodeSelect={handleNodeSelect}
-               />
-             )}
-          </div>
+        <div className="w-1/3 min-w-[350px] flex flex-col z-10">
+           <CodeEditor 
+             code={irCode} 
+             onChange={setIrCode} 
+             selectedNodeId={selectedNodeId}
+             onNodeSelect={handleNodeSelect}
+             nodeCount={parsedData?.nodes.size || 0}
+           />
         </div>
 
         {/* Middle: Graph View */}
-        <div className="flex-1 flex flex-col bg-slate-950 relative">
+        <div className="flex-1 flex flex-col bg-slate-950 relative shadow-inner">
            <div className="absolute top-4 left-4 z-10">
                {globalAnalysis && (
                    <div className="bg-emerald-900/90 border border-emerald-700 text-emerald-100 p-4 rounded-lg shadow-xl max-w-md text-sm backdrop-blur-sm animate-in fade-in slide-in-from-top-4">
@@ -158,7 +136,7 @@ const App: React.FC = () => {
                    </div>
                )}
            </div>
-           <div className="flex-1 p-4 h-full w-full overflow-hidden">
+           <div className="flex-1 h-full w-full overflow-hidden">
              {parsedData && (
                <DependencyGraph 
                  parsedData={parsedData} 
@@ -170,7 +148,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Right: Details Panel */}
-        <div className="w-80 border-l border-slate-800 bg-slate-900/30 shrink-0">
+        <div className="w-80 border-l border-slate-800 bg-slate-900/50 backdrop-blur-sm shrink-0 z-10">
            <InfoPanel 
              selectedNode={selectedNode} 
              contextCode={parsedData?.rawLines || []}

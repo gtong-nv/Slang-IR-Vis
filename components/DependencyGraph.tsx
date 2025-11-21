@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
-import { ParsedIR, IRGraphNode, IRGraphLink, IRNodeType } from '../types';
+import { ParsedIR, IRGraphNode, IRGraphLink, IRNodeType, IRNode } from '../types';
 
 interface DependencyGraphProps {
   parsedData: ParsedIR;
@@ -28,7 +28,7 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
     d3.select(svgRef.current).selectAll("*").remove();
 
     // Prepare Data
-    const nodes: IRGraphNode[] = Array.from(parsedData.nodes.values()).map(n => ({
+    const nodes: IRGraphNode[] = Array.from(parsedData.nodes.values()).map((n: IRNode) => ({
       id: n.id,
       label: n.opcode || n.id,
       type: n.type,
