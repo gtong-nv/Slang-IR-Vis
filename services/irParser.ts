@@ -1,4 +1,5 @@
-import { IRNode, IRNodeType, ParsedIR, IROperand, IRPass } from '../types';
+
+import { IRNode, IRNodeType, ParsedIR, IROperand, IRPass, IRAttribute } from '../types';
 
 export const parsePasses = (input: string): IRPass[] => {
   // Normalize line endings
@@ -77,6 +78,14 @@ export const parsePasses = (input: string): IRPass[] => {
   return passes;
 };
 
+// Helper to find all %ID references in a string
+// Used to extract hidden dependencies from types or complex operands
+const findAllReferences = (text: string): string[] => {
+  if (!text) return [];
+  const matches = text.match(/%\w+/g);
+  return matches ? Array.from(new Set(matches)) : []; // Unique refs
+};
+
 export const parseSlangIR = (input: string): ParsedIR => {
   const lines = input.split('\n');
   const nodes = new Map<string, IRNode>();
@@ -84,31 +93,82 @@ export const parseSlangIR = (input: string): ParsedIR => {
   const functions: string[] = [];
 
   // Regex patterns
-  // let %1 : Type = opcode(operands)
-  const instructionRegex = /let\s+(%\w+)\s*:\s*(.+?)\s*=\s*(\w+)\((.*)\)/;
+  // let %1 : Type = opcode(operands) OR let %1 : Type = opcode
+  const instructionRegex = /let\s+(%\w+)\s*:\s*(.+?)\s*=\s*(\w+)(?:\((.*)\))?/;
   
   // block %21:
-  const blockRegex = /block\s+(%\w+)(?::|\()/; // Updated to handle optional params (
+  const blockRegex = /block\s+(%\w+)(?::|\()/; 
 
   // func %computeMain : Func(Void)
   const funcRegex = /func\s+(%\w+)\s*:\s*(.+)/;
 
   // %outputBuffer : RWStructuredBuffer(...) = global_param
   const globalParamRegex = /(%\w+)\s*:\s*(.+?)\s*=\s*global_param/;
+  
+  // witness_table %17 : witness_table_t(%IBufferDataLayout)(DefaultLayout);
+  const witnessTableRegex = /witness_table\s+(%\w+)\s*:\s*(.+)/;
 
-  // Simple store: store(%26, %25)
-  const voidOpRegex = /^\s*(\w+)\((.*)\)/; 
+  // struct %genericStruct : Type
+  const structRegex = /struct\s+(%\w+)\s*:\s*(.+)/;
+
+  // param %dispatchThreadID : Type
+  const paramRegex = /param\s+(%\w+)\s*:\s*(.+)/;
+
+  // Attribute: [name(args)] or [name]
+  const attributeRegex = /^\[(\w+)(?:\((.*)\))?\]$/;
+
+  // Simple store: store(%26, %25) or Poison
+  const voidOpRegex = /^\s*(\w+)(?:\((.*)\))?/; 
+
+  let pendingAttributes: IRAttribute[] = [];
+  let currentBlockId: string | null = null;
+
+  // Helper to attach attributes and process their edges
+  const attachAttributesAndProcessEdges = (nodeId: string) => {
+     const attributes = [...pendingAttributes];
+     
+     attributes.forEach(attr => {
+         // Add explicit operands from attribute
+         attr.operands.forEach(op => {
+             if (op.refId) {
+                 edges.push({ from: op.refId, to: nodeId });
+             }
+         });
+         // Also check raw args for hidden refs (e.g. layout(%1))
+         const deepRefs = findAllReferences(attr.args);
+         deepRefs.forEach(ref => {
+            edges.push({ from: ref, to: nodeId });
+         });
+     });
+     
+     pendingAttributes = [];
+     return attributes;
+  };
 
   lines.forEach((line, index) => {
     const cleanLine = line.trim();
     if (!cleanLine || cleanLine.startsWith('//')) return;
-    if (cleanLine.startsWith('###')) return; // Ignore pass delimiters if any leak through
+    if (cleanLine.startsWith('###')) return; 
+
+    // 0. Attributes
+    const attrMatch = cleanLine.match(attributeRegex);
+    if (attrMatch) {
+        const [, name, args] = attrMatch;
+        const operands = args ? parseOperands(args) : [];
+        pendingAttributes.push({
+            name,
+            args: args || '',
+            raw: cleanLine,
+            operands
+        });
+        return; // Done with this line
+    }
 
     // 1. Match LET instructions
     const letMatch = cleanLine.match(instructionRegex);
     if (letMatch) {
       const [, id, type, opcode, argsRaw] = letMatch;
-      const operands = parseOperands(argsRaw);
+      const operands = argsRaw ? parseOperands(argsRaw) : [];
       
       const node: IRNode = {
         id,
@@ -117,16 +177,31 @@ export const parseSlangIR = (input: string): ParsedIR => {
         dataType: type,
         opcode,
         operands,
-        lineIndex: index
+        lineIndex: index,
+        attributes: attachAttributesAndProcessEdges(id),
+        parentBlockId: currentBlockId || undefined
       };
       
       nodes.set(id, node);
       
+      // Process Operands for Edges
       operands.forEach(op => {
         if (op.refId) {
            edges.push({ from: op.refId, to: id });
         }
+        // Deep scan for nested refs in complex operands like foo(%1)
+        const deepRefs = findAllReferences(op.raw);
+        deepRefs.forEach(ref => {
+           if (ref !== op.refId) edges.push({ from: ref, to: id });
+        });
       });
+
+      // Process Type for Edges (Fixes generic specializations depending on other nodes)
+      const typeRefs = findAllReferences(type);
+      typeRefs.forEach(ref => {
+          edges.push({ from: ref, to: id });
+      });
+
       return;
     }
 
@@ -134,13 +209,15 @@ export const parseSlangIR = (input: string): ParsedIR => {
     const blockMatch = cleanLine.match(blockRegex);
     if (blockMatch) {
       const [, id] = blockMatch;
+      currentBlockId = id; // Set current block
       nodes.set(id, {
         id,
         originalLine: line,
         type: IRNodeType.Block,
         operands: [],
         lineIndex: index,
-        opcode: 'block'
+        opcode: 'block',
+        attributes: attachAttributesAndProcessEdges(id)
       });
       return;
     }
@@ -150,6 +227,7 @@ export const parseSlangIR = (input: string): ParsedIR => {
     if (funcMatch) {
       const [, id, type] = funcMatch;
       functions.push(id);
+      currentBlockId = null; // Reset current block when entering new function
       nodes.set(id, {
         id,
         originalLine: line,
@@ -157,7 +235,8 @@ export const parseSlangIR = (input: string): ParsedIR => {
         dataType: type,
         operands: [],
         lineIndex: index,
-        opcode: 'func'
+        opcode: 'func',
+        attributes: attachAttributesAndProcessEdges(id)
       });
       return;
     }
@@ -166,26 +245,104 @@ export const parseSlangIR = (input: string): ParsedIR => {
     const globalMatch = cleanLine.match(globalParamRegex);
     if (globalMatch) {
       const [, id, type] = globalMatch;
+      
+      // Extract refs from type (e.g., RWStructuredBuffer<..., %7>)
+      const typeRefs = findAllReferences(type);
+      const extraOperands = typeRefs.map(ref => ({ raw: ref, refId: ref }));
+
       nodes.set(id, {
         id,
         originalLine: line,
         type: IRNodeType.Variable,
         dataType: type,
         opcode: 'global_param',
-        operands: [],
-        lineIndex: index
+        operands: extraOperands,
+        lineIndex: index,
+        attributes: attachAttributesAndProcessEdges(id),
+        // Global params usually not in a block
+        parentBlockId: currentBlockId || undefined 
       });
+
+      // Create edges from type references
+      typeRefs.forEach(ref => {
+          edges.push({ from: ref, to: id });
+      });
+
       return;
     }
 
-    // 5. Standalone/Void Ops
+    // 5. Witness Tables (New)
+    const witnessMatch = cleanLine.match(witnessTableRegex);
+    if (witnessMatch) {
+        let [, id, type] = witnessMatch;
+        // Remove trailing semicolon if present
+        if (type.endsWith(';')) type = type.slice(0, -1);
+
+        // Extract refs from type (e.g., witness_table_t(%IBufferDataLayout)(DefaultLayout))
+        const typeRefs = findAllReferences(type);
+        const extraOperands = typeRefs.map(ref => ({ raw: ref, refId: ref }));
+
+        nodes.set(id, {
+            id,
+            originalLine: line,
+            type: IRNodeType.Variable, // Use Variable as it acts like a data definition
+            dataType: type,
+            opcode: 'witness_table',
+            operands: extraOperands,
+            lineIndex: index,
+            attributes: attachAttributesAndProcessEdges(id),
+            parentBlockId: currentBlockId || undefined
+        });
+
+        typeRefs.forEach(ref => {
+            edges.push({ from: ref, to: id });
+        });
+        return;
+    }
+
+    // 6. Struct Definitions
+    const structMatch = cleanLine.match(structRegex);
+    if (structMatch) {
+        const [, id, type] = structMatch;
+        nodes.set(id, {
+            id,
+            originalLine: line,
+            type: IRNodeType.Struct,
+            dataType: type,
+            opcode: 'struct',
+            operands: [],
+            lineIndex: index,
+            attributes: attachAttributesAndProcessEdges(id)
+        });
+        return;
+    }
+
+    // 7. Param Definitions (in blocks)
+    const paramMatch = cleanLine.match(paramRegex);
+    if (paramMatch) {
+        const [, id, type] = paramMatch;
+        nodes.set(id, {
+            id,
+            originalLine: line,
+            type: IRNodeType.Parameter,
+            dataType: type,
+            opcode: 'param',
+            operands: [],
+            lineIndex: index,
+            attributes: attachAttributesAndProcessEdges(id),
+            parentBlockId: currentBlockId || undefined
+        });
+        return;
+    }
+
+    // 8. Standalone/Void Ops
     const voidMatch = cleanLine.match(voidOpRegex);
     if (voidMatch && !line.includes('=')) {
-       if (cleanLine.startsWith('[')) return;
-       if (cleanLine.endsWith(':')) return;
+       if (cleanLine.startsWith('[')) return; // Handled above
+       if (cleanLine.endsWith(':')) return; // Labels/Blocks handled above
 
        const [, opcode, argsRaw] = voidMatch;
-       const operands = parseOperands(argsRaw);
+       const operands = argsRaw ? parseOperands(argsRaw) : [];
        const syntheticId = `op_${index}`;
 
        const node: IRNode = {
@@ -195,7 +352,9 @@ export const parseSlangIR = (input: string): ParsedIR => {
          opcode,
          operands,
          lineIndex: index,
-         description: 'Void Instruction'
+         description: 'Void Instruction',
+         attributes: attachAttributesAndProcessEdges(syntheticId),
+         parentBlockId: currentBlockId || undefined
        };
        nodes.set(syntheticId, node);
 
@@ -203,6 +362,11 @@ export const parseSlangIR = (input: string): ParsedIR => {
         if (op.refId) {
            edges.push({ from: op.refId, to: syntheticId });
         }
+        // Deep scan for nested refs
+        const deepRefs = findAllReferences(op.raw);
+        deepRefs.forEach(ref => {
+           if (ref !== op.refId) edges.push({ from: ref, to: syntheticId });
+        });
       });
     }
   });
@@ -216,7 +380,7 @@ export const parseSlangIR = (input: string): ParsedIR => {
 };
 
 const parseOperands = (rawArgs: string): IROperand[] => {
-  if (!rawArgs.trim()) return [];
+  if (!rawArgs || !rawArgs.trim()) return [];
   const operands: IROperand[] = [];
   let current = '';
   let depth = 0;

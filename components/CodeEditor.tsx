@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { Edit2, Eye, Copy, Check, Terminal, Search, ArrowUp, ArrowDown, X } from 'lucide-react';
 
@@ -162,7 +163,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   return (
     <div className="flex flex-col h-full bg-slate-950 border-r border-slate-800">
       {/* Toolbar / Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm gap-2">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm gap-2 shrink-0">
          <div className="flex items-center gap-3 overflow-hidden shrink-0">
             <div className="p-1 bg-slate-800 rounded text-slate-400 shrink-0">
                 <Terminal size={14} />
@@ -242,18 +243,18 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
       </div>
 
       {/* Editor Body */}
-      <div className="flex-1 overflow-hidden relative bg-slate-950">
+      <div className="flex-1 relative bg-slate-950">
         {isEditing ? (
            <textarea 
              ref={textAreaRef}
-             className="w-full h-full bg-slate-950 text-slate-300 p-4 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 resize-none custom-scrollbar leading-relaxed"
+             className="absolute inset-0 w-full h-full bg-slate-950 text-slate-300 p-4 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 resize-none custom-scrollbar leading-relaxed"
              value={code}
              onChange={(e) => onChange(e.target.value)}
              spellCheck={false}
              placeholder="// Paste your Slang IR code here..."
            />
         ) : (
-           <div className="overflow-auto h-full custom-scrollbar py-2">
+           <div className="absolute inset-0 overflow-auto custom-scrollbar py-2">
               {code.trim() ? (
                   code.split('\n').map((line, i) => renderLine(line, i))
               ) : (

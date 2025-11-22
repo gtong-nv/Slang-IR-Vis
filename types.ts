@@ -1,3 +1,4 @@
+
 export enum IRNodeType {
   Instruction = 'Instruction',
   Block = 'Block',
@@ -5,12 +6,21 @@ export enum IRNodeType {
   Metadata = 'Metadata',
   Variable = 'Variable',
   Literal = 'Literal',
-  Unknown = 'Unknown'
+  Unknown = 'Unknown',
+  Struct = 'Struct',
+  Parameter = 'Parameter'
 }
 
 export interface IROperand {
   raw: string;
   refId?: string; // if it references another %id
+}
+
+export interface IRAttribute {
+  name: string;
+  args: string;
+  raw: string;
+  operands: IROperand[];
 }
 
 export interface IRNode {
@@ -22,6 +32,8 @@ export interface IRNode {
   operands: IROperand[];
   lineIndex: number;
   description?: string;
+  attributes?: IRAttribute[];
+  parentBlockId?: string;
 }
 
 export interface IRGraphNode {
@@ -31,6 +43,7 @@ export interface IRGraphNode {
   details: IRNode;
   group?: number;
   radius?: number;
+  parentBlockId?: string;
   // d3.SimulationNodeDatum properties
   index?: number;
   x?: number;
@@ -45,6 +58,7 @@ export interface IRGraphLink {
   source: string | IRGraphNode;
   target: string | IRGraphNode;
   index?: number;
+  kind?: 'dependency' | 'structural';
 }
 
 export interface ParsedIR {

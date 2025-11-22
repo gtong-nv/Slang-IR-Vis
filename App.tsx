@@ -479,16 +479,21 @@ const App: React.FC = () => {
 // Add custom scrollbar styles via a style tag for simplicity
 const style = document.createElement('style');
 style.innerHTML = `
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #334155 #0f172a;
+  }
   .custom-scrollbar::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
   }
   .custom-scrollbar::-webkit-scrollbar-track {
     background: #0f172a; 
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
     background: #334155; 
-    border-radius: 4px;
+    border-radius: 5px;
+    border: 2px solid #0f172a; 
   }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #475569; 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { IRNode } from '../types';
 import { explainIRNode } from '../services/geminiService';
-import { Sparkles, BookOpen, Code, Activity } from 'lucide-react';
+import { Sparkles, BookOpen, Code, Activity, Tag, Link2 } from 'lucide-react';
 
 interface InfoPanelProps {
   selectedNode: IRNode | null;
@@ -42,8 +42,8 @@ const InfoPanel: React.FC<InfoPanelProps> = ({ selectedNode, contextCode }) => {
   return (
     <div className="h-full flex flex-col p-4 bg-slate-900 border-l border-slate-800 overflow-y-auto">
       <div className="mb-6 border-b border-slate-800 pb-4">
-        <h2 className="text-xl font-bold text-white flex items-center gap-2">
-          <Code className="text-blue-500" size={20}/>
+        <h2 className="text-xl font-bold text-white flex items-center gap-2 break-all">
+          <Code className="text-blue-500 shrink-0" size={20}/>
           {selectedNode.id}
         </h2>
         <span className="text-xs font-mono text-slate-500 bg-slate-950 px-2 py-1 rounded mt-2 inline-block border border-slate-800">
@@ -54,7 +54,7 @@ const InfoPanel: React.FC<InfoPanelProps> = ({ selectedNode, contextCode }) => {
       <div className="space-y-4">
         <div>
           <h3 className="text-xs uppercase font-semibold text-slate-500 mb-1">Instruction</h3>
-          <div className="font-mono text-sm bg-slate-950 p-3 rounded border border-slate-800 text-emerald-400 break-all">
+          <div className="font-mono text-sm bg-slate-950 p-3 rounded border border-slate-800 text-emerald-400 break-all whitespace-pre-wrap">
             {selectedNode.originalLine}
           </div>
         </div>
@@ -69,6 +69,36 @@ const InfoPanel: React.FC<InfoPanelProps> = ({ selectedNode, contextCode }) => {
              <div className="text-slate-200">{selectedNode.dataType || '-'}</div>
           </div>
         </div>
+
+        {/* Attributes Section */}
+        {selectedNode.attributes && selectedNode.attributes.length > 0 && (
+          <div>
+            <h3 className="text-xs uppercase font-semibold text-slate-500 mb-2 flex items-center gap-1">
+               <Tag size={12} /> Attributes (Metadata)
+            </h3>
+            <div className="flex flex-col gap-2">
+              {selectedNode.attributes.map((attr, i) => (
+                <div key={i} className="bg-slate-950/50 border border-slate-800 rounded p-2 text-xs font-mono">
+                   <div className="text-purple-400 mb-1 font-semibold">{attr.name}</div>
+                   {attr.operands.length > 0 ? (
+                      <div className="flex flex-wrap gap-1 items-center text-slate-400">
+                         <Link2 size={10} className="mr-1"/>
+                         {attr.operands.map((op, j) => (
+                            <span key={j} className={op.refId ? "text-blue-400 bg-blue-950/30 px-1 rounded" : ""}>
+                               {op.raw}
+                            </span>
+                         ))}
+                      </div>
+                   ) : (
+                      <div className="text-slate-500">{attr.args || "No arguments"}</div>
+                   )}
+                   {/* Fallback if operands parsing missed something but text exists */}
+                   {!attr.operands.length && attr.args && <div className="text-slate-600 mt-1 truncate">{attr.raw}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div>
           <h3 className="text-xs uppercase font-semibold text-slate-500 mb-1">Dependencies (Operands)</h3>

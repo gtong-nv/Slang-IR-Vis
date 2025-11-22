@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import { ParsedIR, IRGraphNode, IRGraphLink, IRNodeType, IRNode } from '../types';
@@ -34,19 +35,34 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
       type: n.type,
       details: n,
       radius: n.type === IRNodeType.Variable || n.type === IRNodeType.Function ? 25 : 15,
-      group: n.type === IRNodeType.Block ? 1 : (n.opcode === 'varLayout' ? 2 : 3) 
+      group: n.type === IRNodeType.Block ? 1 : (n.opcode === 'varLayout' ? 2 : 3),
+      parentBlockId: n.parentBlockId
     }));
     
     // Update Ref
     nodesRef.current = nodes;
 
     const nodeIds = new Set(nodes.map(n => n.id));
-    const links: IRGraphLink[] = parsedData.edges
+    
+    // Standard dependency links
+    const dependencyLinks: IRGraphLink[] = parsedData.edges
       .filter(e => nodeIds.has(e.from) && nodeIds.has(e.to))
       .map(e => ({
         source: e.from,
-        target: e.to
+        target: e.to,
+        kind: 'dependency'
       }));
+      
+    // Structural links (Child -> Block) to keep them grouped via forces (invisible)
+    const structuralLinks: IRGraphLink[] = nodes
+      .filter(n => n.parentBlockId && nodeIds.has(n.parentBlockId))
+      .map(n => ({
+          source: n.id,
+          target: n.parentBlockId!,
+          kind: 'structural'
+      }));
+
+    const allLinks = [...dependencyLinks, ...structuralLinks];
 
     const svg = d3.select(svgRef.current)
       .attr("viewBox", [0, 0, width, height])
@@ -83,19 +99,36 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
       .attr("d", "M0,-5L10,0L0,5");
 
     const simulation = d3.forceSimulation<IRGraphNode>(nodes)
-      .force("link", d3.forceLink<IRGraphNode, IRGraphLink>(links).id(d => d.id).distance(80))
-      .force("charge", d3.forceManyBody().strength(-300))
+      .force("link", d3.forceLink<IRGraphNode, IRGraphLink>(allLinks)
+            .id(d => d.id)
+            .distance(d => d.kind === 'structural' ? 40 : 100) // Tighter for structure
+            .strength(d => d.kind === 'structural' ? 0.05 : 1) // Weak pull for structure, just a suggestion
+      )
+      .force("charge", d3.forceManyBody<IRGraphNode>().strength(d => d.type === IRNodeType.Block ? -800 : -400))
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collide", d3.forceCollide<IRGraphNode>().radius(d => (d.radius || 20) + 5));
+      .force("collide", d3.forceCollide<IRGraphNode>().radius(d => (d.radius || 20) + 20)); 
 
-    // Separate group for links so they are always behind nodes
+    // Layer for Block Group Rectangles (Behind everything)
+    const groupLayer = g.append("g").attr("class", "groups");
+    const groupRects = groupLayer.selectAll("rect")
+        .data(nodes.filter(n => n.type === IRNodeType.Block))
+        .join("rect")
+        .attr("rx", 8)
+        .attr("ry", 8)
+        .attr("fill", "rgba(139, 92, 246, 0.05)") // Light purple background
+        .attr("stroke", "#8b5cf6") // Purple border
+        .attr("stroke-width", 1)
+        .attr("stroke-dasharray", "4,4")
+        .attr("opacity", 0.8);
+
+    // Separate group for links
     const linkGroup = g.append("g").attr("class", "links");
     
     const link = linkGroup
       .attr("stroke", "#475569")
       .attr("stroke-opacity", 0.6)
       .selectAll("line")
-      .data(links)
+      .data(dependencyLinks) // Only visualize dependency links
       .join("line")
       .attr("stroke-width", 1.5)
       .attr("marker-end", "url(#arrow)");
@@ -107,7 +140,7 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
       .selectAll<SVGGElement, IRGraphNode>("g")
       .data(nodes)
       .join("g")
-      .attr("class", "node-group") // Add class for easier selection
+      .attr("class", "node-group") 
       .call(d3.drag<SVGGElement, IRGraphNode>()
         .on("start", dragstarted)
         .on("drag", dragged)
@@ -138,13 +171,14 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
 
     // Opcode labels
     node.append("text")
-      .text(d => d.details.opcode ? d.details.opcode.slice(0, 12) : '')
+      .text(d => d.details.opcode ? d.details.opcode : '')
       .attr("x", 0)
       .attr("y", d => (d.radius || 15) + 12)
       .attr("text-anchor", "middle")
       .attr("font-size", "9px")
       .attr("fill", "#cbd5e1")
-      .attr("pointer-events", "none");
+      .attr("pointer-events", "none")
+      .style("text-shadow", "2px 2px 4px #000000"); 
 
     simulation.on("tick", () => {
       link
@@ -155,6 +189,31 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
 
       node
         .attr("transform", d => `translate(${d.x},${d.y})`);
+
+      // Update Group Rects
+      groupRects.each(function(d) {
+          // Find all nodes that belong to this block + the block node itself
+          const children = nodes.filter(n => n.parentBlockId === d.id || n.id === d.id);
+          
+          if (children.length > 0) {
+              const xCoords = children.map(c => c.x!).filter(x => x !== undefined);
+              const yCoords = children.map(c => c.y!).filter(y => y !== undefined);
+              
+              if (xCoords.length > 0 && yCoords.length > 0) {
+                  const x0 = Math.min(...xCoords);
+                  const x1 = Math.max(...xCoords);
+                  const y0 = Math.min(...yCoords);
+                  const y1 = Math.max(...yCoords);
+                  const padding = 30;
+
+                  d3.select(this)
+                    .attr("x", x0 - padding)
+                    .attr("y", y0 - padding)
+                    .attr("width", x1 - x0 + padding * 2)
+                    .attr("height", y1 - y0 + padding * 2);
+              }
+          }
+      });
     });
 
     function dragstarted(event: d3.D3DragEvent<SVGGElement, IRGraphNode, unknown>, d: IRGraphNode) {
@@ -177,6 +236,8 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
     function getColor(d: IRGraphNode) {
       if (d.type === IRNodeType.Function) return "#ef4444";
       if (d.type === IRNodeType.Block) return "#8b5cf6";
+      if (d.type === IRNodeType.Struct) return "#ec4899";
+      if (d.type === IRNodeType.Parameter) return "#f97316";
       if (d.details.opcode === 'varLayout') return "#334155";
       return "#3b82f6";
     }
@@ -184,7 +245,7 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
     return () => {
       simulation.stop();
     };
-  }, [parsedData, onNodeClick]); // Dependencies for init
+  }, [parsedData, onNodeClick]); 
 
   // Handle Node Selection (Highlight + Zoom)
   useEffect(() => {
@@ -198,13 +259,15 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
           if (d.id === selectedNodeId) return "#f59e0b"; // Selected Color
           if (d.type === IRNodeType.Function) return "#ef4444";
           if (d.type === IRNodeType.Block) return "#8b5cf6";
+          if (d.type === IRNodeType.Struct) return "#ec4899";
+          if (d.type === IRNodeType.Parameter) return "#f97316";
           if (d.details.opcode === 'varLayout') return "#334155";
           return "#3b82f6";
       })
       .attr("stroke", d => d.id === selectedNodeId ? "#fcd34d" : "#fff")
       .attr("stroke-width", d => d.id === selectedNodeId ? 3 : 1.5);
 
-    // Raise selected node group to front
+    // Raise selected node group
     if (selectedNodeId) {
       svg.selectAll(".node-group")
          .filter((d: any) => d.id === selectedNodeId)
@@ -215,26 +278,23 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
     if (selectedNodeId && containerRef.current) {
       const node = nodesRef.current.find(n => n.id === selectedNodeId);
       
-      // Ensure node exists and has coordinates (simulation might still be initializing, but usually it has initial pos)
       if (node && typeof node.x === 'number' && typeof node.y === 'number') {
         const width = containerRef.current.clientWidth;
         const height = containerRef.current.clientHeight;
-        const scale = 1.5; // Target zoom level
+        const scale = 1.5; 
         
-        // Calculate translation to center the node
-        // We want (node.x * scale + tx) = width / 2
         const tx = width / 2 - node.x * scale;
         const ty = height / 2 - node.y * scale;
 
         const transform = d3.zoomIdentity.translate(tx, ty).scale(scale);
 
         svgSelectionRef.current.transition()
-          .duration(750) // Smooth animation
+          .duration(750) 
           .call(zoomRef.current.transform, transform);
       }
     }
 
-  }, [selectedNodeId]); // Only re-run when selection changes
+  }, [selectedNodeId]); 
 
   return (
     <div ref={containerRef} className="w-full h-full relative bg-slate-900 overflow-hidden rounded-lg shadow-inner border border-slate-800">
@@ -244,6 +304,7 @@ const DependencyGraph: React.FC<DependencyGraphProps> = ({ parsedData, onNodeCli
         <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-slate-600"></span> Layout/Meta</div>
         <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-purple-500"></span> Block</div>
         <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-red-500"></span> Function</div>
+        <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-pink-500"></span> Struct</div>
       </div>
     </div>
   );
