@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { ParsedIR, IRPass } from './types';
 import { parseSlangIR, parsePasses } from './services/irParser';
 import { analyzeFlow } from './services/geminiService';
 import CodeEditor from './components/CodeEditor';
 import DependencyGraph from './components/DependencyGraph';
 import InfoPanel from './components/InfoPanel';
-import { Layout, MessageSquare, Sparkles, Layers, FileText } from 'lucide-react';
+import { Layout, MessageSquare, Sparkles, Layers, FileText, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Code2, Info } from 'lucide-react';
 
 // Updated Sample data with multiple passes
 const SAMPLE_IR = `###
@@ -129,6 +130,17 @@ const App: React.FC = () => {
   const [globalAnalysis, setGlobalAnalysis] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
+  // Layout State
+  const [passesWidth, setPassesWidth] = useState(250);
+  const [sourceWidth, setSourceWidth] = useState(400);
+  const [detailWidth, setDetailWidth] = useState(350);
+  
+  const [isPassesCollapsed, setIsPassesCollapsed] = useState(false);
+  const [isSourceCollapsed, setIsSourceCollapsed] = useState(false);
+  const [isDetailCollapsed, setIsDetailCollapsed] = useState(false);
+  
+  const [isResizing, setIsResizing] = useState<'passes' | 'source' | 'detail' | null>(null);
+
   // Initialize passes from SAMPLE_IR on mount
   useEffect(() => {
     const initialPasses = parsePasses(SAMPLE_IR);
@@ -172,7 +184,10 @@ const App: React.FC = () => {
 
   const handleNodeSelect = useCallback((id: string) => {
     setSelectedNodeId(id);
-  }, []);
+    if (isDetailCollapsed) {
+        setIsDetailCollapsed(false); // Auto-expand when selecting a node
+    }
+  }, [isDetailCollapsed]);
 
   const handleAnalyzeGlobal = async () => {
     if (!currentPass) return;
@@ -186,6 +201,54 @@ const App: React.FC = () => {
     if (!parsedData || !selectedNodeId) return null;
     return parsedData.nodes.get(selectedNodeId) || null;
   }, [parsedData, selectedNodeId]);
+
+  // Resizing Logic
+  const startResizing = (type: 'passes' | 'source' | 'detail') => (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(type);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+
+      if (isResizing === 'passes') {
+         // Constrain width between 150px and 500px
+         const newWidth = Math.max(150, Math.min(e.clientX, 500));
+         setPassesWidth(newWidth);
+      } else if (isResizing === 'source') {
+         // Calculate offset based on previous panels
+         const passesPanelWidth = (!isPassesCollapsed && passes.length > 1) ? passesWidth : (passes.length > 1 ? 48 : 0);
+         const newWidth = Math.max(200, Math.min(e.clientX - passesPanelWidth, 800));
+         setSourceWidth(newWidth);
+      } else if (isResizing === 'detail') {
+         // Resize from right side (dragging left border increases width)
+         const newWidth = Math.max(250, Math.min(window.innerWidth - e.clientX, 800));
+         setDetailWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(null);
+    };
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    } else {
+      document.body.style.cursor = 'default';
+      document.body.style.userSelect = 'auto';
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'default';
+      document.body.style.userSelect = 'auto';
+    };
+  }, [isResizing, isPassesCollapsed, passesWidth, passes.length]);
 
   return (
     <div className="h-screen flex flex-col bg-slate-950 text-slate-200 font-sans">
@@ -212,54 +275,140 @@ const App: React.FC = () => {
       {/* Main Content */}
       <main className="flex-1 flex overflow-hidden">
         
-        {/* Pass Selection Sidebar (Only if multiple passes) */}
+        {/* Pass Selection Sidebar */}
         {passes.length > 1 && (
-          <div className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0">
-            <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 text-slate-400 uppercase tracking-wider text-xs font-bold">
-                <Layers size={14} />
-                Compilation Passes
+          <>
+            <div 
+              style={{ width: isPassesCollapsed ? 48 : passesWidth, transition: isResizing ? 'none' : 'width 0.3s ease' }}
+              className="bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 relative"
+            >
+              {/* Sidebar Header */}
+              <div className={`h-10 border-b border-slate-800 flex items-center ${isPassesCollapsed ? 'justify-center' : 'justify-between px-4'} transition-all overflow-hidden`}>
+                 {!isPassesCollapsed && (
+                    <div className="flex items-center gap-2 text-slate-400 uppercase tracking-wider text-xs font-bold whitespace-nowrap">
+                       <Layers size={14} />
+                       Passes
+                    </div>
+                 )}
+                 <button 
+                   onClick={() => setIsPassesCollapsed(!isPassesCollapsed)}
+                   className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors"
+                   title={isPassesCollapsed ? "Expand Passes" : "Collapse Passes"}
+                 >
+                    {isPassesCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+                 </button>
+              </div>
+
+              {/* List Content */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden">
+                 {!isPassesCollapsed ? (
+                    passes.map((pass, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => { setSelectedPassIndex(idx); setSelectedNodeId(null); }}
+                          className={`w-full text-left px-4 py-3 border-b border-slate-800/50 text-sm flex items-center gap-2 transition-colors ${
+                              selectedPassIndex === idx 
+                              ? 'bg-indigo-900/30 text-white border-l-4 border-l-indigo-500' 
+                              : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200 border-l-4 border-l-transparent'
+                          }`}
+                        >
+                            <FileText size={14} className={`shrink-0 ${selectedPassIndex === idx ? 'text-indigo-400' : 'opacity-50'}`}/>
+                            <span className="truncate">{pass.name}</span>
+                        </button>
+                    ))
+                 ) : (
+                    /* Collapsed Vertical Icons */
+                    passes.map((pass, idx) => (
+                       <button
+                         key={idx}
+                         onClick={() => { setSelectedPassIndex(idx); setSelectedNodeId(null); }}
+                         className={`w-full aspect-square flex items-center justify-center border-b border-slate-800/50 transition-colors ${
+                            selectedPassIndex === idx ? 'bg-indigo-900/30 text-indigo-400' : 'text-slate-500 hover:text-slate-200'
+                         }`}
+                         title={pass.name}
+                       >
+                          <FileText size={16} />
+                       </button>
+                    ))
+                 )}
+              </div>
             </div>
-            <div className="flex-1 overflow-y-auto custom-scrollbar">
-               {passes.map((pass, idx) => (
-                   <button
-                     key={idx}
-                     onClick={() => { setSelectedPassIndex(idx); setSelectedNodeId(null); }}
-                     className={`w-full text-left px-4 py-3 border-b border-slate-800/50 text-sm flex items-center gap-2 transition-colors ${
-                         selectedPassIndex === idx 
-                         ? 'bg-indigo-900/30 text-white border-l-4 border-l-indigo-500' 
-                         : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200 border-l-4 border-l-transparent'
-                     }`}
-                   >
-                       <FileText size={14} className={selectedPassIndex === idx ? 'text-indigo-400' : 'opacity-50'}/>
-                       <span className="truncate">{pass.name}</span>
-                   </button>
-               ))}
-            </div>
-          </div>
+
+            {/* Resizer for Passes */}
+            {!isPassesCollapsed && (
+               <div 
+                 className="w-1 bg-slate-950 hover:bg-indigo-500 cursor-col-resize transition-colors z-20 flex-shrink-0 border-r border-slate-800"
+                 onMouseDown={startResizing('passes')}
+               />
+            )}
+          </>
         )}
 
         {/* Code View */}
-        <div className={`${passes.length > 1 ? 'w-[350px]' : 'w-1/3 min-w-[350px]'} flex flex-col z-10 border-r border-slate-800`}>
-           <CodeEditor 
-             code={currentPass?.content || ''} 
-             onChange={handleCodeChange} 
-             selectedNodeId={selectedNodeId}
-             onNodeSelect={handleNodeSelect}
-             nodeCount={parsedData?.nodes.size || 0}
-             title={currentPass?.name}
-           />
+        <div 
+          style={{ width: isSourceCollapsed ? 48 : sourceWidth, transition: isResizing ? 'none' : 'width 0.3s ease' }}
+          className="flex flex-col z-10 border-r border-slate-800 shrink-0 bg-slate-950 relative"
+        >
+           {/* Custom Collapsed Header for Code View */}
+           {isSourceCollapsed && (
+             <div className="h-full flex flex-col items-center py-2 gap-4 border-r border-slate-800 bg-slate-900">
+                <button 
+                   onClick={() => setIsSourceCollapsed(false)}
+                   className="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded"
+                   title="Expand Source"
+                >
+                   <PanelLeftOpen size={18} />
+                </button>
+                <div className="h-px w-6 bg-slate-800"></div>
+                <div className="vertical-rl text-slate-500 text-xs font-bold tracking-wider uppercase flex items-center gap-2" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>
+                   <Code2 size={14} className="rotate-90 mb-2"/>
+                   Source Code
+                </div>
+             </div>
+           )}
+
+           {/* Standard Code Editor (Hidden when collapsed to avoid rendering cost/layout issues) */}
+           <div className={`flex-1 flex flex-col min-w-0 ${isSourceCollapsed ? 'hidden' : ''}`}>
+              {/* Add collapse button to CodeEditor header area implicitly by wrapping */}
+              <div className="relative flex-1 h-full">
+                 <CodeEditor 
+                   code={currentPass?.content || ''} 
+                   onChange={handleCodeChange} 
+                   selectedNodeId={selectedNodeId}
+                   onNodeSelect={handleNodeSelect}
+                   nodeCount={parsedData?.nodes.size || 0}
+                   title={currentPass?.name}
+                 />
+                 {/* Absolute Collapse Button for Source */}
+                 <button 
+                    onClick={() => setIsSourceCollapsed(true)}
+                    className="absolute top-3 right-2 z-20 p-1 text-slate-500 hover:text-white hover:bg-slate-700/50 rounded"
+                    title="Collapse Source"
+                 >
+                   <PanelLeftClose size={14} />
+                 </button>
+              </div>
+           </div>
         </div>
 
+        {/* Resizer for Source */}
+        {!isSourceCollapsed && (
+            <div 
+              className="w-1 bg-slate-950 hover:bg-indigo-500 cursor-col-resize transition-colors z-20 flex-shrink-0 border-r border-slate-800"
+              onMouseDown={startResizing('source')}
+            />
+        )}
+
         {/* Middle: Graph View */}
-        <div className="flex-1 flex flex-col bg-slate-950 relative shadow-inner">
-           <div className="absolute top-4 left-4 z-10">
+        <div className="flex-1 flex flex-col bg-slate-950 relative shadow-inner min-w-0">
+           <div className="absolute top-4 left-4 z-10 pointer-events-none">
                {globalAnalysis && (
-                   <div className="bg-emerald-900/90 border border-emerald-700 text-emerald-100 p-4 rounded-lg shadow-xl max-w-md text-sm backdrop-blur-sm animate-in fade-in slide-in-from-top-4">
+                   <div className="bg-emerald-900/90 border border-emerald-700 text-emerald-100 p-4 rounded-lg shadow-xl max-w-md text-sm backdrop-blur-sm animate-in fade-in slide-in-from-top-4 pointer-events-auto">
                        <div className="flex justify-between items-start mb-2">
                            <h3 className="font-bold flex items-center gap-2"><Sparkles size={14}/> AI Analysis</h3>
                            <button onClick={() => setGlobalAnalysis(null)} className="text-emerald-400 hover:text-white">&times;</button>
                        </div>
-                       <p className="leading-relaxed opacity-90">{globalAnalysis}</p>
+                       <p className="leading-relaxed opacity-90 max-h-[300px] overflow-y-auto custom-scrollbar">{globalAnalysis}</p>
                    </div>
                )}
            </div>
@@ -273,13 +422,53 @@ const App: React.FC = () => {
              )}
            </div>
         </div>
+        
+        {/* Resizer for Detail */}
+        {!isDetailCollapsed && (
+            <div 
+              className="w-1 bg-slate-950 hover:bg-indigo-500 cursor-col-resize transition-colors z-20 flex-shrink-0 border-l border-slate-800"
+              onMouseDown={startResizing('detail')}
+            />
+        )}
 
         {/* Right: Details Panel */}
-        <div className="w-80 border-l border-slate-800 bg-slate-900/50 backdrop-blur-sm shrink-0 z-10">
-           <InfoPanel 
-             selectedNode={selectedNode} 
-             contextCode={parsedData?.rawLines || []}
-           />
+        <div 
+          style={{ width: isDetailCollapsed ? 48 : detailWidth, transition: isResizing ? 'none' : 'width 0.3s ease' }}
+          className="border-l border-slate-800 bg-slate-900/50 backdrop-blur-sm shrink-0 z-10 flex flex-col relative"
+        >
+           {/* Collapsed State */}
+           {isDetailCollapsed && (
+             <div className="h-full flex flex-col items-center py-2 gap-4 bg-slate-900">
+                <button 
+                   onClick={() => setIsDetailCollapsed(false)}
+                   className="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded"
+                   title="Expand Details"
+                >
+                   <PanelRightOpen size={18} />
+                </button>
+                <div className="h-px w-6 bg-slate-800"></div>
+                <div className="vertical-rl text-slate-500 text-xs font-bold tracking-wider uppercase flex items-center gap-2" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>
+                   <Info size={14} className="rotate-90 mb-2"/>
+                   Details
+                </div>
+             </div>
+           )}
+
+           {/* Expanded State */}
+           <div className={`flex-1 h-full overflow-hidden relative ${isDetailCollapsed ? 'hidden' : ''}`}>
+               <InfoPanel 
+                 selectedNode={selectedNode} 
+                 contextCode={parsedData?.rawLines || []}
+               />
+               {/* Collapse Button */}
+               <button 
+                  onClick={() => setIsDetailCollapsed(true)}
+                  className="absolute top-3 right-2 z-20 p-1 text-slate-500 hover:text-white hover:bg-slate-700/50 rounded"
+                  title="Collapse Details"
+               >
+                 <PanelRightClose size={14} />
+               </button>
+           </div>
         </div>
 
       </main>
