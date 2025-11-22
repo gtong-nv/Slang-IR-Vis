@@ -9,6 +9,7 @@ interface CodeEditorProps {
   onNodeSelect: (id: string) => void;
   nodeCount: number;
   title?: string;
+  selectedLineIndex?: number | null;
 }
 
 const CodeEditor: React.FC<CodeEditorProps> = ({ 
@@ -17,7 +18,8 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   selectedNodeId, 
   onNodeSelect,
   nodeCount,
-  title
+  title,
+  selectedLineIndex
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -48,15 +50,23 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
 
   // Scroll to selected line in View mode (External Selection)
   useEffect(() => {
-    if (selectedNodeId && !isEditing && !searchTerm) {
-      const lines = code.split('\n');
-      const index = lines.findIndex(line => line.includes(`${selectedNodeId} `) || line.includes(`${selectedNodeId}:`));
+    if (!isEditing && !searchTerm) {
+      let index = -1;
+
+      // Priority: Use explicit line index if available (handles void ops like 'store' correctly)
+      if (selectedLineIndex !== undefined && selectedLineIndex !== null) {
+          index = selectedLineIndex;
+      } else if (selectedNodeId) {
+          // Fallback: Search for ID in text
+          const lines = code.split('\n');
+          index = lines.findIndex(line => line.includes(`${selectedNodeId} `) || line.includes(`${selectedNodeId}:`) || line.startsWith(selectedNodeId));
+      }
       
       if (index >= 0 && lineRefs.current[index]) {
         lineRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
-  }, [selectedNodeId, code, isEditing, searchTerm]);
+  }, [selectedNodeId, selectedLineIndex, code, isEditing, searchTerm]);
 
   // Scroll to current search match
   useEffect(() => {
@@ -105,7 +115,10 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   };
 
   const renderLine = (line: string, index: number) => {
-    const isSelected = selectedNodeId && (line.includes(`let ${selectedNodeId} `) || line.includes(`block ${selectedNodeId}`) || line.startsWith(selectedNodeId));
+    // Check for match by Line Index first, then fallback to ID text match
+    const isSelected = (selectedLineIndex !== undefined && selectedLineIndex !== null && index === selectedLineIndex) || 
+                       (selectedNodeId && (line.includes(`let ${selectedNodeId} `) || line.includes(`block ${selectedNodeId}`) || line.startsWith(selectedNodeId)));
+
     const isSearchMatch = matches.includes(index);
     const isCurrentMatch = matches.length > 0 && matches[currentMatchIndex] === index;
 

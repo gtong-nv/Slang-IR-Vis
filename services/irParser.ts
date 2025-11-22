@@ -343,7 +343,7 @@ export const parseSlangIR = (input: string): ParsedIR => {
 
        const [, opcode, argsRaw] = voidMatch;
        const operands = argsRaw ? parseOperands(argsRaw) : [];
-       const syntheticId = `op_${index}`;
+       const syntheticId = `line_${index}`;
 
        const node: IRNode = {
          id: syntheticId,

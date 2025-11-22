@@ -378,6 +378,7 @@ const App: React.FC = () => {
                    onNodeSelect={handleNodeSelect}
                    nodeCount={parsedData?.nodes.size || 0}
                    title={currentPass?.name}
+                   selectedLineIndex={selectedNode?.lineIndex ?? null}
                  />
                  {/* Absolute Collapse Button for Source */}
                  <button 
