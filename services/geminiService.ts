@@ -3,7 +3,7 @@ import { IRNode } from "../types";
 
 // Initialize client
 // Note: apiKey is expected to be in process.env.API_KEY per instructions
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || 'DUMMY_KEY' });
 
 export const explainIRNode = async (node: IRNode, contextLines: string[]): Promise<string> => {
   if (!process.env.API_KEY) {
