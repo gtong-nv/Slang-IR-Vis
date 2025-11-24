@@ -228,16 +228,27 @@ export const parseSlangIR = (input: string): ParsedIR => {
       const [, id, type] = funcMatch;
       functions.push(id);
       currentBlockId = null; // Reset current block when entering new function
+      
+      // Extract refs from type (e.g., Func(Void, %Input, OutParam(%Output)))
+      const typeRefs = findAllReferences(type);
+      const extraOperands = typeRefs.map(ref => ({ raw: ref, refId: ref }));
+
       nodes.set(id, {
         id,
         originalLine: line,
         type: IRNodeType.Function,
         dataType: type,
-        operands: [],
+        operands: extraOperands,
         lineIndex: index,
         opcode: 'func',
         attributes: attachAttributesAndProcessEdges(id)
       });
+      
+      // Create edges from type references
+      typeRefs.forEach(ref => {
+          edges.push({ from: ref, to: id });
+      });
+      
       return;
     }
 

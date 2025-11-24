@@ -379,15 +379,8 @@ const App: React.FC = () => {
                    nodeCount={parsedData?.nodes.size || 0}
                    title={currentPass?.name}
                    selectedLineIndex={selectedNode?.lineIndex ?? null}
+                   onCollapse={() => setIsSourceCollapsed(true)}
                  />
-                 {/* Absolute Collapse Button for Source */}
-                 <button 
-                    onClick={() => setIsSourceCollapsed(true)}
-                    className="absolute top-3 right-2 z-20 p-1 text-slate-500 hover:text-white hover:bg-slate-700/50 rounded"
-                    title="Collapse Source"
-                 >
-                   <PanelLeftClose size={14} />
-                 </button>
               </div>
            </div>
         </div>

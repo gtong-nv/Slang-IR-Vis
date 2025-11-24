@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { Edit2, Eye, Copy, Check, Terminal, Search, ArrowUp, ArrowDown, X } from 'lucide-react';
+import { Edit2, Eye, Copy, Check, Terminal, Search, ArrowUp, ArrowDown, X, PanelLeftClose } from 'lucide-react';
 
 interface CodeEditorProps {
   code: string;
@@ -10,6 +10,7 @@ interface CodeEditorProps {
   nodeCount: number;
   title?: string;
   selectedLineIndex?: number | null;
+  onCollapse?: () => void;
 }
 
 const CodeEditor: React.FC<CodeEditorProps> = ({ 
@@ -19,7 +20,8 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   onNodeSelect,
   nodeCount,
   title,
-  selectedLineIndex
+  selectedLineIndex,
+  onCollapse
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -252,6 +254,20 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
                 </>
               )}
             </button>
+
+            {/* Collapse Button passed from parent */}
+            {onCollapse && (
+              <>
+                <div className="h-4 w-px bg-slate-700 mx-1"></div>
+                <button 
+                  onClick={onCollapse}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                  title="Collapse Source Panel"
+                >
+                   <PanelLeftClose size={14} />
+                </button>
+              </>
+            )}
          </div>
       </div>
 
